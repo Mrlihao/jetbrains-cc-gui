@@ -20,6 +20,15 @@ import {
 // Matches session-titles-service.cjs#updateTitle, which rejects longer titles.
 const CUSTOM_TITLE_MAX_LENGTH = 50;
 
+// Stable backend failure codes -> friendly toast copy. Unknown codes fall back
+// to the generic message (with the raw error appended when present).
+const TITLE_REGENERATION_ERROR_KEYS: Record<string, string> = {
+  empty_session: 'history.titleRegenerateFailed.emptySession',
+  disabled: 'history.titleRegenerateFailed.disabled',
+  session_not_found: 'history.titleRegenerateFailed.sessionNotFound',
+  generation_failed: 'history.titleRegenerateFailed.generationFailed',
+};
+
 export function registerSessionAndSdkCallbacks(
   options: UseWindowCallbacksOptions,
   tRef: MutableRefObject<UseWindowCallbacksOptions['t']>,
@@ -38,6 +47,7 @@ export function registerSessionAndSdkCallbacks(
     updateHistoryTitle,
     applyHistoryTitleLocal,
     setCustomSessionTitle,
+    settleTitleRegeneration,
   } = options;
 
   window.setSessionId = (sessionId: string) => {
@@ -172,13 +182,78 @@ export function registerSessionAndSdkCallbacks(
     // Only apply the title if it matches the current session to prevent
     // stale events from overwriting the wrong session's title.
     if (currentSessionIdRef.current !== sessionId) return;
-    if (options.currentProviderRef.current === 'codex') {
-      options.setRestoredSessionTitle({ sessionId, title: title.trim() });
-      if (!customSessionTitleRef.current) applyHistoryTitleLocal(sessionId, title.trim());
+    const trimmed = title.trim();
+    // Automatic titles go to restoredSessionTitle, never to
+    // customSessionTitle: that slot is reserved for manual edits and the
+    // persisted custom title. Keeping the two apart means a later AI title can
+    // never overwrite a manual title, and restoreSessionTitle never mistakes an
+    // AI title for a manual edit.
+    options.setRestoredSessionTitle({ sessionId, title: trimmed });
+    if (!customSessionTitleRef.current) applyHistoryTitleLocal(sessionId, trimmed);
+  };
+
+  // =========================================================================
+  // Persisted Custom Title Callback
+  // =========================================================================
+
+  /**
+   * Applies the user-set title saved in session-titles.json after a webview
+   * restart. A restored transcript only carries the CLI-derived title, so the
+   * header would otherwise show the old AI title until the session is reopened
+   * from the history list.
+   */
+  window.restoreSessionTitle = (sessionId: string, title: string) => {
+    if (!title || !title.trim() || !sessionId) return;
+    // Only a title keyed to the session on screen may show; a stale push for a
+    // previously opened session must not retitle the current one.
+    if (currentSessionIdRef.current !== sessionId) return;
+    // customSessionTitle carries only manual edits and persisted titles, so a
+    // nonempty value is a newer manual edit that must win over this restore.
+    if (customSessionTitleRef.current) return;
+    setCustomSessionTitle(title.trim());
+  };
+
+  // Apply a title that arrived before this effect mounted (see main.tsx).
+  if (window.__pendingRestoreSessionTitle) {
+    const pending = window.__pendingRestoreSessionTitle;
+    delete window.__pendingRestoreSessionTitle;
+    window.restoreSessionTitle?.(pending.sessionId, pending.title);
+  }
+
+  // =========================================================================
+  // AI Title Regeneration Result Callback (refresh buttons)
+  // =========================================================================
+
+  // Registered once for the app lifetime (unlike the per-view registration the
+  // history list originally used) so the chat-header refresh button also
+  // receives its result while the history view is not mounted.
+  window.onTitleRegenerated = (json: string) => {
+    let payload: { sessionId?: string; success?: boolean; title?: string; code?: string; error?: string };
+    try {
+      payload = JSON.parse(json);
+    } catch {
       return;
     }
-    setCustomSessionTitle(title.trim());
-    applyHistoryTitleLocal(sessionId, title.trim());
+    if (!payload.sessionId) return;
+
+    const sessionId = payload.sessionId;
+    settleTitleRegeneration(sessionId);
+
+    if (payload.success && payload.title) {
+      applyHistoryTitleLocal(sessionId, payload.title);
+      addToast(tRef.current('history.titleRegenerated'), 'success');
+      return;
+    }
+    // The chat-header title of the current session updates through the
+    // title_generated daemon event (updateSessionTitle above); failures keep
+    // the original title untouched, so only the toast is needed here.
+    const reasonKey = payload.code ? TITLE_REGENERATION_ERROR_KEYS[payload.code] : undefined;
+    const message = reasonKey
+      ? tRef.current(reasonKey)
+      : payload.error
+        ? `${tRef.current('history.titleRegenerateFailed.generic')}: ${payload.error}`
+        : tRef.current('history.titleRegenerateFailed.generic');
+    addToast(message, 'error');
   };
 
   // =========================================================================

@@ -7,6 +7,7 @@ describe('useSessionManagement', () => {
 
   const createMocks = () => ({
     setHistoryData: vi.fn(),
+    setRegeneratingTitleSessionIds: vi.fn(),
     setMessages: vi.fn(),
     setCurrentView: vi.fn(),
     setCurrentSessionId: vi.fn(),
@@ -296,6 +297,38 @@ describe('useSessionManagement', () => {
     expect(historyData).toMatchObject({ total: 7, sessions: [{ messageCount: 7, isFavorited: true, title: 'Renamed' }] });
     act(() => { result.current.applyHistoryTitleLocal('saved', 'Generated'); });
     expect(historyData).toMatchObject({ total: 7, sessions: [{ messageCount: 7, isFavorited: true, title: 'Generated' }] });
+  });
+
+  it('retitles the open session when its title is edited from the history list', () => {
+    let historyData: HistoryData = {
+      success: true,
+      source: 'native',
+      sessions: [{ sessionId: 'open', title: 'Old title' }],
+    };
+    const mocks = { ...createMocks(), setHistoryData: vi.fn((update: HistoryData | null | ((current: HistoryData | null) => HistoryData | null)) => {
+      historyData = (typeof update === 'function' ? update(historyData) : update) as HistoryData;
+    }) };
+    const { result } = renderHook(() => useSessionManagement({ messages: [], loading: false,
+      historyData, currentSessionId: 'open', ...mocks, t }));
+    act(() => { result.current.updateHistoryTitle('open', 'New title'); });
+    expect(mocks.setCustomSessionTitle).toHaveBeenCalledWith('New title');
+    expect(historyData.sessions?.[0].title).toBe('New title');
+  });
+
+  it('leaves the open session title alone when another session is edited', () => {
+    const historyData: HistoryData = {
+      success: true,
+      source: 'native',
+      sessions: [
+        { sessionId: 'open', title: 'Open title' },
+        { sessionId: 'other', title: 'Other title' },
+      ],
+    };
+    const mocks = createMocks();
+    const { result } = renderHook(() => useSessionManagement({ messages: [], loading: false,
+      historyData, currentSessionId: 'open', ...mocks, t }));
+    act(() => { result.current.updateHistoryTitle('other', 'Renamed'); });
+    expect(mocks.setCustomSessionTitle).not.toHaveBeenCalled();
   });
 
   it('defers the deleted toast until transition completion when batch delete removes current session', () => {
