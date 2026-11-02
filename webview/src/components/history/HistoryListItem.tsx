@@ -77,6 +77,7 @@ export const HistoryListItem = memo(({
             sessionId={session.sessionId}
             sessionTitle={session.title}
             isSelected={isSelected}
+            disabled={session.running}
             t={t}
             onSelectionToggle={onSelectionToggle}
           />

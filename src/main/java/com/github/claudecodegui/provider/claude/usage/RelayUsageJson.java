@@ -146,25 +146,32 @@ public final class RelayUsageJson {
      * Assemble the shared capacity payload from ordered windows. The binding
      * {@code capacity_pct} prefers the 5h window (the shortest actionable budget)
      * and otherwise falls back to the worst window, mirroring the original z.ai
-     * behaviour. {@code windows} must be non-empty; {@code level} (plan tier) is
-     * optional and vendor-specific.
+     * behaviour. {@code period_type} always names the same window as
+     * {@code capacity_pct} so consumers never pair a percentage with a
+     * different period (e.g. OpenCode without a rolling window).
+     * {@code windows} must be non-empty; {@code level} (plan tier) is optional
+     * and vendor-specific.
      */
     public static JsonObject capacityPayload(String source, Collection<JsonObject> windows, String level) {
         if (windows == null || windows.isEmpty()) {
             return null;
         }
-        Double primary5h = null;
-        double maxPct = 0;
+        JsonObject binding = null;
         for (JsonObject w : windows) {
-            double pct = w.get("used_pct").getAsDouble();
             if ("5h".equals(w.get("id").getAsString())) {
-                primary5h = pct;
-            }
-            if (pct > maxPct) {
-                maxPct = pct;
+                binding = w;
+                break;
             }
         }
-        double capacity = primary5h != null ? primary5h : maxPct;
+        if (binding == null) {
+            binding = windows.iterator().next();
+            for (JsonObject w : windows) {
+                if (w.get("used_pct").getAsDouble() > binding.get("used_pct").getAsDouble()) {
+                    binding = w;
+                }
+            }
+        }
+        double capacity = binding.get("used_pct").getAsDouble();
 
         JsonObject out = new JsonObject();
         out.addProperty("ok", true);
@@ -172,7 +179,7 @@ public final class RelayUsageJson {
         out.addProperty("provider", "claude");
         out.addProperty("source", source);
         out.addProperty("capacity_pct", capacity);
-        out.addProperty("period_type", windows.iterator().next().get("id").getAsString());
+        out.addProperty("period_type", binding.get("id").getAsString());
         JsonArray arr = new JsonArray();
         for (JsonObject w : windows) {
             arr.add(w);

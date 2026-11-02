@@ -26,9 +26,10 @@ public class OpenRouterUsageVendorTest {
     // ===== response parsing =====
 
     @Test
-    public void parseBalance_derivesRemainingFromCreditsMinusUsage() {
+    public void parseBalance_readsLimitRemainingUsageAndLimit() {
         JsonObject body = JsonParser.parseString(
-                "{\"data\":{\"total_credits\":100,\"total_usage\":57.5}}").getAsJsonObject();
+                "{\"data\":{\"limit_remaining\":42.5,\"usage\":57.5,\"limit\":100}}")
+                .getAsJsonObject();
 
         RelayUsageJson.Balance balance = vendor.parseBalance(body, "openrouter.ai");
 
@@ -39,11 +40,22 @@ public class OpenRouterUsageVendorTest {
     }
 
     @Test
-    public void parseBalance_singleFieldStillReports() {
+    public void parseBalance_unlimitedKeyHasNoLimitRemainingAndRendersNothing() {
+        // limit_remaining is null when the key has no spend limit; usage alone
+        // is not a balance, so nothing is rendered.
+        assertNull(vendor.parseBalance(
+                JsonParser.parseString("{\"data\":{\"usage\":12.5,\"limit\":null}}")
+                        .getAsJsonObject(),
+                "openrouter.ai"));
+    }
+
+    @Test
+    public void parseBalance_missingUsageDefaultsToNull() {
         RelayUsageJson.Balance balance = vendor.parseBalance(
-                JsonParser.parseString("{\"data\":{\"total_usage\":12.5}}").getAsJsonObject(),
+                JsonParser.parseString("{\"data\":{\"limit_remaining\":20}}").getAsJsonObject(),
                 "openrouter.ai");
-        assertEquals(-12.5, balance.remaining(), 0.001);
+        assertEquals(20.0, balance.remaining(), 0.001);
+        assertNull(balance.used());
         assertNull(balance.total());
     }
 

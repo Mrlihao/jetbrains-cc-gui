@@ -5,14 +5,16 @@ import com.google.gson.JsonObject;
 /**
  * OpenRouter prepaid credits via the openrouter.ai anthropic-compat backend.
  *
- * <p>Probes {@code {origin}/api/v1/credits}: the only balance vendor that
- * reports a denominator — remaining is derived as
- * {@code total_credits − total_usage} so the payload also carries
- * {@code total}/{@code used} for the tooltip. Amounts are USD.
+ * <p>Probes {@code {origin}/api/v1/key}: the current-key endpoint that works
+ * with the ordinary inference key configured in {@code ANTHROPIC_AUTH_TOKEN}
+ * ({@code /api/v1/credits} needs a management key, which cannot call models,
+ * so a regular setup would only ever see HTTP 403). The response reports
+ * {@code limit_remaining}/{@code usage}/{@code limit} in USD; a key without a
+ * spend limit has {@code limit_remaining: null} and renders nothing.
  */
 public final class OpenRouterUsageVendor extends BalanceUsageVendor {
 
-    private static final String USAGE_PATH = "/api/v1/credits";
+    private static final String USAGE_PATH = "/api/v1/key";
 
     @Override
     public String id() {
@@ -29,7 +31,7 @@ public final class OpenRouterUsageVendor extends BalanceUsageVendor {
         return USAGE_PATH;
     }
 
-    /** Parse the credits body into remaining/total/used (USD). */
+    /** Parse the current-key body into remaining/total/used (USD). */
     @Override
     protected RelayUsageJson.Balance parseBalance(JsonObject body, String host) {
         if (body == null) {
@@ -39,14 +41,21 @@ public final class OpenRouterUsageVendor extends BalanceUsageVendor {
         if (data == null) {
             data = body;
         }
-        Double total = RelayUsageJson.asDouble(data, "total_credits");
-        Double used = RelayUsageJson.asDouble(data, "total_usage");
-        if (total == null && used == null) {
+        Double remaining = RelayUsageJson.asDouble(data, "limit_remaining");
+        // limit_remaining is null when the key has no spend limit: there is no
+        // remaining budget to render, and reporting usage alone is not a
+        // balance, so the indicator stays hidden.
+        if (remaining == null || !Double.isFinite(remaining)) {
             return null;
         }
-        // Missing fields stay null in the payload; the arithmetic treats them as 0.
-        double t = total != null && Double.isFinite(total) ? total : 0.0;
-        double u = used != null && Double.isFinite(used) ? used : 0.0;
-        return new RelayUsageJson.Balance(t - u, total, used, "USD");
+        Double used = RelayUsageJson.asDouble(data, "usage");
+        if (used != null && !Double.isFinite(used)) {
+            used = null;
+        }
+        Double total = RelayUsageJson.asDouble(data, "limit");
+        if (total != null && !Double.isFinite(total)) {
+            total = null;
+        }
+        return new RelayUsageJson.Balance(remaining, total, used, "USD");
     }
 }

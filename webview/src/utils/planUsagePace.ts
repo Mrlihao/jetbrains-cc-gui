@@ -49,6 +49,8 @@ export interface PlanUsageSnapshot {
   level?: string;
   /** True when the payload is a cached copy served after a failed refresh probe. */
   stale?: boolean;
+  /** True when nothing could be asked (Grok daemon not running); not a failure. */
+  dormant?: boolean;
 }
 
 export const PLAN_USAGE_WINDOW_STORAGE_KEY = 'ccgui.planUsage.windowId';
@@ -317,20 +319,26 @@ export function parseCapacityPayload(data: unknown): PlanUsageSnapshot {
     source: typeof o.source === 'string' ? o.source : 'gateway',
     level: typeof o.level === 'string' ? o.level : undefined,
     stale: o.stale === true ? true : undefined,
+    dormant: o.dormant === true ? true : undefined,
   };
 }
 
+/** Currency signs for units that have one; other units spell out their code. */
+const CURRENCY_SIGNS: Record<string, string> = { USD: '$', CNY: '¥' };
+
 /**
  * Compact amount label for the balance indicator: "¥42.50" / "$12.34".
- * Unknown units fall back to the CNY sign (every current balance vendor
- * bills in CNY or USD); negatives keep their sign.
+ * Sign and digits both come from the value rounded to cents, so a residual
+ * −0.001 renders as "¥0.00", not "−¥0.00". Units without a known sign are
+ * spelled out ("EUR 12.34") instead of borrowing the CNY sign.
  */
 export function formatBalance(amount: number, unit?: string | null): string {
   if (!Number.isFinite(amount)) return '—';
   const u = (unit || 'CNY').toUpperCase();
-  const prefix = u === 'USD' ? '$' : '¥';
-  const abs = Math.abs(amount).toFixed(2);
-  return amount < 0 ? `-${prefix}${abs}` : `${prefix}${abs}`;
+  const prefix = CURRENCY_SIGNS[u] ?? `${u} `;
+  const cents = Math.round(amount * 100) / 100;
+  const abs = Math.abs(cents).toFixed(2);
+  return cents < 0 ? `-${prefix}${abs}` : `${prefix}${abs}`;
 }
 
 /** Prefer stored window id if present; else binding top-level; else first window. */

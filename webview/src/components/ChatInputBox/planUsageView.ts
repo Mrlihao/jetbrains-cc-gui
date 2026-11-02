@@ -64,11 +64,13 @@ export function derivePlanUsageView(
   const fullReset = present ? formatFullReset(display!.resetAt, language) : '';
   const winLabel = windowShortLabel(display?.windowId || display?.periodType);
   const balance = snapshot?.balance;
-  const balanceView =
+  const balanceView: PlanUsageBalanceView | null =
     balance && (snapshot?.windows ?? []).length === 0
       ? {
         amount: formatBalance(balance.remaining, balance.unit),
-        color: (balance.remaining <= 0 ? 'red' : 'neutral') as PaceColor,
+        // Color follows the displayed amount (rounded to cents), so a
+        // remaining $0.004 renders as a red "$0.00", not a green one.
+        color: (Math.round(balance.remaining * 100) / 100 <= 0 ? 'red' : 'neutral') as PaceColor,
       }
       : null;
   return { present, tp, color, worstColor, fullReset, winLabel, balance: balanceView };
@@ -112,7 +114,9 @@ export function buildPlanUsageTooltip({
       || t('chat.planUsage.unavailable', { defaultValue: 'Usage unavailable' });
   }
   const period = display?.periodType || display?.windowId || 'limit';
-  const lines = [t('chat.planUsage.title', { defaultValue: 'Claude plan usage' })];
+  const lines = [snapshot?.provider === 'grok'
+    ? t('chat.planUsage.grokTitle', { defaultValue: 'Grok plan usage' })
+    : t('chat.planUsage.title', { defaultValue: 'Claude plan usage' })];
   if (snapshot?.level) {
     lines.push(snapshot.level.toUpperCase());
   }
@@ -153,11 +157,14 @@ export function buildPlanUsageTooltip({
     );
   }
   if (snapshot?.stale) {
-    lines.push(
-      t('chat.planUsage.stale', {
+    // Dormant: nothing failed, the Grok daemon simply is not running to ask.
+    lines.push(snapshot.dormant
+      ? t('chat.planUsage.staleIdle', {
+        defaultValue: 'Last reading. It refreshes the next time you use Grok',
+      })
+      : t('chat.planUsage.stale', {
         defaultValue: 'Data may be outdated (refresh failed)',
-      }),
-    );
+      }));
   }
   return lines.join('\n');
 }

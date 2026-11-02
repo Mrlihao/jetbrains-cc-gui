@@ -30,7 +30,9 @@ public class RelayUsageRegistryTest {
         assertEquals("minimax", RelayUsageRegistry.match("https://api.minimax.io/v1").id());
         assertEquals("zai", RelayUsageRegistry.match("https://api.z.ai/api/anthropic").id());
         assertEquals("zai", RelayUsageRegistry.match("https://open.bigmodel.cn/api/anthropic").id());
-        assertEquals("opencode", RelayUsageRegistry.match("https://opencode.ai/zen/v1").id());
+        assertEquals("opencode", RelayUsageRegistry.match("https://opencode.ai/zen/go/v1").id());
+        // Pure Zen (pay-as-you-go) has no usage feed; probing it would 401.
+        assertNull(RelayUsageRegistry.match("https://opencode.ai/zen/v1"));
         assertEquals("deepseek", RelayUsageRegistry.match("https://api.deepseek.com/anthropic").id());
         assertEquals("openrouter", RelayUsageRegistry.match("https://openrouter.ai/api/v1").id());
         assertNull(RelayUsageRegistry.match("https://api.anthropic.com"));

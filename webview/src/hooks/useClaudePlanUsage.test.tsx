@@ -39,7 +39,7 @@ describe('useClaudePlanUsage', () => {
   it('stays hidden (idle) while no event has ever arrived', () => {
     w.sendToJava = vi.fn();
     const { result } = renderHook(() => useClaudePlanUsage('claude'));
-    expect(w.sendToJava).toHaveBeenCalledWith('get_claude_plan_usage:');
+    expect(w.sendToJava).toHaveBeenCalledWith(expect.stringMatching(/^get_claude_plan_usage:\d+$/));
 
     act(() => {
       w.updateClaudePlanUsage?.(JSON.stringify(unavailablePayload));
@@ -80,25 +80,84 @@ describe('useClaudePlanUsage', () => {
     renderHook(() => useClaudePlanUsage('claude'));
     expect(w.sendToJava).toHaveBeenCalledTimes(1);
 
-    // First update also re-polls: after a remount (e.g. returning from
-    // settings) the ref starts null and this push may itself be a switch.
+    // First push (settingsBootstrap's get_active_provider reply, not a
+    // switch) must not clear or re-poll: the instance already polls with
+    // current data, and clearing would blink a visible indicator.
     act(() => {
       w.updateActiveProvider?.(JSON.stringify({ id: 'provider-a', isActive: true }));
     });
-    expect(w.sendToJava).toHaveBeenCalledTimes(2);
+    expect(w.sendToJava).toHaveBeenCalledTimes(1);
 
     // Same provider pushed again → no duplicate poll.
     act(() => {
       w.updateActiveProvider?.(JSON.stringify({ id: 'provider-a', isActive: true }));
     });
-    expect(w.sendToJava).toHaveBeenCalledTimes(2);
+    expect(w.sendToJava).toHaveBeenCalledTimes(1);
 
     // Provider switch → immediate re-poll.
     act(() => {
       w.updateActiveProvider?.(JSON.stringify({ id: 'provider-b', isActive: true }));
     });
-    expect(w.sendToJava).toHaveBeenCalledTimes(3);
-    expect(w.sendToJava).toHaveBeenLastCalledWith('get_claude_plan_usage:');
+    expect(w.sendToJava).toHaveBeenCalledTimes(2);
+    expect(w.sendToJava).toHaveBeenLastCalledWith(expect.stringMatching(/^get_claude_plan_usage:\d+$/));
+  });
+
+  it('does not blink the indicator on the bootstrap first push after data arrived', () => {
+    installRuntimeProviderDispatchers();
+    w.sendToJava = vi.fn();
+    const { result } = renderHook(() => useClaudePlanUsage('claude'));
+
+    // Data arrives for the current provider → bar visible.
+    act(() => {
+      w.updateClaudePlanUsage?.(JSON.stringify(presentPayload));
+    });
+    expect(result.current.status).toBe('ready');
+
+    // The bootstrap push (~200ms after load) reports the same provider; the
+    // indicator must stay ready instead of hiding and reappearing.
+    act(() => {
+      w.updateActiveProvider?.(JSON.stringify({ id: 'provider-a', isActive: true }));
+    });
+    expect(result.current.status).toBe('ready');
+  });
+
+  it('ignores a late reply from the previous provider', () => {
+    installRuntimeProviderDispatchers();
+    w.sendToJava = vi.fn();
+    const { result } = renderHook(() => useClaudePlanUsage('claude'));
+
+    act(() => {
+      w.updateActiveProvider?.(JSON.stringify({ id: 'provider-a', isActive: true }));
+    });
+    act(() => {
+      w.updateActiveProvider?.(JSON.stringify({ id: 'provider-b', isActive: true }));
+    });
+
+    const sent = vi.mocked(w.sendToJava!).mock.calls
+      .map(([cmd]) => cmd);
+    const newestId = sent[sent.length - 1].slice('get_claude_plan_usage:'.length);
+    const previousId = sent[sent.length - 2].slice('get_claude_plan_usage:'.length);
+
+    // The new provider's reply arrives first.
+    act(() => {
+      w.updateClaudePlanUsage?.(JSON.stringify({
+        ...presentPayload,
+        capacity_pct: 7,
+        request_id: newestId,
+      }));
+    });
+    expect(result.current.status).toBe('ready');
+    expect(result.current.snapshot?.capacityPct).toBe(7);
+
+    // The superseded poll's reply arrives late and must not overwrite it.
+    act(() => {
+      w.updateClaudePlanUsage?.(JSON.stringify({
+        ...presentPayload,
+        capacity_pct: 99,
+        request_id: previousId,
+      }));
+    });
+    expect(result.current.snapshot?.capacityPct).toBe(7);
   });
 
   it('hides the indicator after switching to a provider without usage data', () => {
@@ -154,38 +213,43 @@ describe('useClaudePlanUsage', () => {
     expect(result.current.snapshot).toBeNull();
   });
 
-  it('re-polls when the switch push is the first event after a settings remount', () => {
+  it('a remount reads fresh data: stale same-id replies from the previous instance are dropped', () => {
     installRuntimeProviderDispatchers();
     w.sendToJava = vi.fn();
-    const { result, unmount } = renderHook(() => useClaudePlanUsage('claude'));
+    const { unmount } = renderHook(() => useClaudePlanUsage('claude'));
 
-    // First session: usage provider with data → bar visible.
-    act(() => {
-      w.updateActiveProvider?.(JSON.stringify({ id: 'provider-a', isActive: true }));
-    });
-    act(() => {
-      w.updateClaudePlanUsage?.(JSON.stringify(presentPayload));
-    });
-    expect(result.current.status).toBe('ready');
+    const idOf = (callIdx: number) => vi.mocked(w.sendToJava!).mock.calls[callIdx][0]
+      .slice('get_claude_plan_usage:'.length);
+    const firstInstanceId = idOf(0);
 
-    // Settings route unmounts the chat view (and this hook); the provider
-    // switch made in settings was pushed while no subscription existed.
+    // Settings route unmounts the chat view while the first poll is still in
+    // flight; the remounted instance starts its own poll with a fresh
+    // module-unique id (never restarts at 1).
     unmount();
     const { result: remounted } = renderHook(() => useClaudePlanUsage('claude'));
+    const secondInstanceId = idOf(1);
+    expect(secondInstanceId).not.toBe(firstInstanceId);
 
-    // The first push after remount is the dropdown switch to a provider
-    // without usage integration — it must drop stale data and re-poll.
+    // The slow reply to the first instance's poll arrives late; its stale
+    // request_id must be dropped instead of surfacing as the new instance's data.
     act(() => {
-      w.updateActiveProvider?.(JSON.stringify({ id: 'provider-no-usage', isActive: true }));
+      w.updateClaudePlanUsage?.(JSON.stringify({
+        ...presentPayload,
+        capacity_pct: 99,
+        request_id: firstInstanceId,
+      }));
     });
     expect(remounted.current.status).toBe('idle');
-    expect(remounted.current.snapshot).toBeNull();
 
-    // Backend answers unavailable → stays hidden, no "Usage —" dash.
+    // The remounted instance's own reply is accepted.
     act(() => {
-      w.updateClaudePlanUsage?.(JSON.stringify(unavailablePayload));
+      w.updateClaudePlanUsage?.(JSON.stringify({
+        ...presentPayload,
+        capacity_pct: 7,
+        request_id: secondInstanceId,
+      }));
     });
-    expect(remounted.current.status).toBe('idle');
-    expect(remounted.current.snapshot).toBeNull();
+    expect(remounted.current.status).toBe('ready');
+    expect(remounted.current.snapshot?.capacityPct).toBe(7);
   });
 });

@@ -48,6 +48,17 @@ public class MoonshotUsageVendorTest {
     }
 
     @Test
+    public void parseBalance_internationalHostReportsUsd() {
+        JsonObject body = JsonParser.parseString(
+                "{\"data\":{\"available_balance\":12.5}}").getAsJsonObject();
+
+        RelayUsageJson.Balance balance = vendor.parseBalance(body, "api.moonshot.ai");
+
+        assertEquals(12.5, balance.remaining(), 0.001);
+        assertEquals("USD", balance.unit());
+    }
+
+    @Test
     public void parseBalance_acceptsFieldVariants() {
         assertEquals(7.5, vendor.parseBalance(
                 JsonParser.parseString("{\"data\":{\"balance\":7.5}}").getAsJsonObject(),

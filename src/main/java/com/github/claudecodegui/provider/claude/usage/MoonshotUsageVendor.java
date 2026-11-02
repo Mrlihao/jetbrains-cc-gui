@@ -12,8 +12,10 @@ import com.google.gson.JsonObject;
  * <p>Probes {@code {origin}/v1/users/me/balance}: {@code data.available_balance}
  * is the usable amount; {@code granted_balance} is gift credit the payload does
  * not carry. Field names have been observed in several shapes, so
- * {@code balance}/{@code total_balance} are accepted as fallbacks. Both sites
- * bill in CNY.
+ * {@code balance}/{@code total_balance} are accepted as fallbacks.
+ *
+ * <p>Currency follows the host: the mainland site (api.moonshot.cn) bills in
+ * CNY, while the international site (api.moonshot.ai) reports USD.
  */
 public final class MoonshotUsageVendor extends BalanceUsageVendor {
 
@@ -48,6 +50,7 @@ public final class MoonshotUsageVendor extends BalanceUsageVendor {
         if (remaining == null || !Double.isFinite(remaining)) {
             return null;
         }
-        return new RelayUsageJson.Balance(remaining, null, null, "CNY");
+        String unit = hostMatches(host, "api.moonshot.ai") ? "USD" : "CNY";
+        return new RelayUsageJson.Balance(remaining, null, null, unit);
     }
 }

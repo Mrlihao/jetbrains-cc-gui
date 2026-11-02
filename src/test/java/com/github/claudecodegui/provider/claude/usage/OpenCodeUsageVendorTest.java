@@ -22,12 +22,16 @@ public class OpenCodeUsageVendorTest {
     // ===== host matching =====
 
     @Test
-    public void matches_openCodeHostOnly() {
-        assertTrue(vendor.matches("opencode.ai", "/zen/v1"));
+    public void matches_goBaseUrlsOnly() {
+        // The usage endpoint needs a Go key; a pure Zen base URL has no
+        // usage feed and would 401 on every poll.
         assertTrue(vendor.matches("opencode.ai", "/zen/go/v1"));
+        assertTrue(vendor.matches("opencode.ai", "/zen/go/v1/"));
+        assertFalse(vendor.matches("opencode.ai", "/zen/v1"));
         assertFalse(vendor.matches("www.opencode.ai", ""));
         assertFalse(vendor.matches("opencode.ai.evil.net", ""));
-        assertFalse(vendor.matches(null, "/zen/v1"));
+        assertFalse(vendor.matches(null, "/zen/go/v1"));
+        assertFalse(vendor.matches("opencode.ai", null));
     }
 
     // ===== response parsing =====
@@ -69,6 +73,46 @@ public class OpenCodeUsageVendorTest {
         com.google.gson.JsonArray windows = payload.getAsJsonArray("windows");
         assertEquals(1, windows.size());
         assertEquals("7d", windows.get(0).getAsJsonObject().get("id").getAsString());
+        // Binding percentage and period must name the same window.
+        assertEquals(42.0, payload.get("capacity_pct").getAsDouble(), 0.01);
+        assertEquals("7d", payload.get("period_type").getAsString());
+    }
+
+    @Test
+    public void parseUsage_missingRollingKeepsCapacityAndPeriodInSync() {
+        JsonObject payload = OpenCodeUsageVendor.parseUsage(JsonParser.parseString(
+                "{\"usage\":{\"weekly\":{\"percent\":20},\"monthly\":{\"percent\":80}}}")
+                .getAsJsonObject());
+
+        // Without rolling the worst window binds; period_type must follow it
+        // instead of defaulting to the first window.
+        assertEquals(80.0, payload.get("capacity_pct").getAsDouble(), 0.01);
+        assertEquals("monthly", payload.get("period_type").getAsString());
+    }
+
+    @Test
+    public void parseUsage_rateLimitedStatusClampsWindowTo100() {
+        JsonObject payload = OpenCodeUsageVendor.parseUsage(JsonParser.parseString("""
+                {"usage":{
+                  "rolling":{"percent":12,"status":"rate-limited"},
+                  "weekly":{"percent":64,"status":"ok"}
+                }}
+                """).getAsJsonObject());
+
+        assertEquals(100.0, payload.get("capacity_pct").getAsDouble(), 0.01);
+        com.google.gson.JsonArray windows = payload.getAsJsonArray("windows");
+        assertEquals(100.0, windows.get(0).getAsJsonObject().get("used_pct").getAsDouble(), 0.01);
+        assertEquals(64.0, windows.get(1).getAsJsonObject().get("used_pct").getAsDouble(), 0.01);
+    }
+
+    @Test
+    public void parseUsage_rateLimitedWithoutPercentStillEmitsWindow() {
+        JsonObject payload = OpenCodeUsageVendor.parseUsage(JsonParser.parseString(
+                "{\"usage\":{\"rolling\":{\"status\":\"RATE_LIMITED\"}}}").getAsJsonObject());
+
+        JsonObject window = payload.getAsJsonArray("windows").get(0).getAsJsonObject();
+        assertEquals("5h", window.get("id").getAsString());
+        assertEquals(100.0, window.get("used_pct").getAsDouble(), 0.01);
     }
 
     @Test

@@ -1,7 +1,7 @@
 # Claude 中转厂商用量查询扩展（多厂商接入）
 
 - 日期：2026-09-02
-- 分支：`feature/v0.5.6`
+- 分支：`feature/v0.6.3`
 - 状态：阶段一、阶段三已完成（阶段二火山 Ark 跳过）；单测全绿（Java / webview 用例数见下）
 
 ## 1. 背景与目标
@@ -46,10 +46,12 @@ provider/claude/usage/
 要点：
 
 - `ClaudePlanUsageService` 保持门面不变（`resolvePlanUsagePayload` 签名、
-  `cacheRateLimitInfo`、`ClaudePlanUsageHandler` 全不动），内部改为委托
+  `cacheRateLimitInfo` 不变），内部改为委托
   `RelayUsageRegistry.resolve(settings, nowMs)`，未命中/探测失败回落 rate_limit 缓存。
-- 厂商注册顺序语义：`kimi-coding` 必须先于（未来阶段的）`kimi`/`moonshot`，
-  因为 api.kimi.com 同时承载两类入口（path 含 `/coding` 才是 Coding Plan）。
+  `ClaudePlanUsageHandler` 只额外回显轮询请求 id（`request_id`），用于丢弃乱序旧响应。
+- 厂商注册顺序语义：`kimi-coding` 排在 `moonshot` 之前。api.kimi.com 只承载
+  Coding Plan（path 含 `/coding`），Moonshot 余额 vendor 故意只匹配
+  api.moonshot.cn / api.moonshot.ai，不匹配 api.kimi.com。
 - host 匹配用 `URI.getHost()` 等于/后缀比较，避免全 URL 子串匹配
   （`url.includes('glm')` 之类会被 path 误触发）。
 - 安全规则沿用 `monitorUrl` 先例：远端必须 HTTPS，明文 HTTP 仅放行 loopback；
@@ -75,14 +77,16 @@ provider/claude/usage/
 
 - webview `PlanUsageSnapshot` 增加可选 `balance{remaining, total?, used?, unit}`，
   `parseCapacityPayload` 接受 balance-only payload；`PlanUsageIndicator` 有余额且无
-  windows 时显示金额（`formatBalance`：CNY→`¥42.50`、USD→`$12.34`）替代百分比条，
-  tooltip 放明细（余额/总额/已用，OpenRouter 有总额），余额 ≤0 时红色。
+  windows 时通过 `PlanUsageTooltip` 显示金额（`formatBalance`：CNY→`¥42.50`、
+  USD→`$12.34`）替代百分比条，tooltip 放明细（余额/总额/已用，OpenRouter 有总额），
+  余额 ≤0 时红色。
 - Java 侧：`RelayUsageJson.balancePayload()` + `Balance` record；`BalanceUsageVendor`
   模板基类（secureOrigin → Bearer GET → parseBalance）。
 - 接入 4 个 vendor：
   - DeepSeek `{origin}/user/balance`：`balance_infos[0].total_balance`，币种读响应 `currency`。
   - Moonshot `{origin}/v1/users/me/balance`：`data.available_balance`（兼容 `balance`/
-    `total_balance` 变体），CNY。
+    `total_balance` 变体）；币种按 host 区分——api.moonshot.cn → CNY，
+    api.moonshot.ai → USD。
   - OpenRouter `{origin}/api/v1/credits`：remaining = `total_credits − total_usage`，
     唯一带 total/used 的厂商，USD。
   - （SiliconFlow / StepFun / Novita / 阿里 DashScope 曾实现，后按要求移除，见第 7 节。）
@@ -98,7 +102,7 @@ provider/claude/usage/
 | zai | 订阅限额 | `z.ai`（含子域）、`open.bigmodel.cn`（含子域） | `{origin}/api/monitor/usage/quota/limit` |
 | minimax | 订阅限额 | `minimaxi.com`（含子域）、`minimax.io`（含子域） | `{origin}/v1/api/openplatform/coding_plan/remains` |
 | kimi-coding | 订阅限额 | `api.kimi.com` + path `/coding` | `{origin}/coding/v1/usages` |
-| opencode | 订阅限额 | `opencode.ai` | `{origin}/zen/go/v1/usage`（rolling→5h / weekly→7d / monthly；`percent` 为已用%） |
+| opencode | 订阅限额 | `opencode.ai` | `{origin}/zen/go/v1/usage`（rolling→5h / weekly→7d / monthly；`percent` 为已用%，`status=rate-limited` 时按 100% 处理） |
 | moonshot | 余额 | `api.moonshot.cn`、`api.moonshot.ai` | `{origin}/v1/users/me/balance` |
 | deepseek | 余额 | `api.deepseek.com` | `{origin}/user/balance` |
 | openrouter | 余额 | `openrouter.ai` | `{origin}/api/v1/credits`（remaining = total_credits − total_usage） |

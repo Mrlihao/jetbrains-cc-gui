@@ -5,15 +5,19 @@ import com.google.gson.JsonObject;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * OpenCode Zen subscription via the opencode.ai anthropic-compat backend
- * ({@code https://opencode.ai/zen/v1} or {@code …/zen/go/v1} — same origin).
+ * OpenCode Zen Go subscription via the opencode.ai anthropic-compat backend
+ * ({@code https://opencode.ai/zen/go/v1}). Only Go-plan base URLs match: the
+ * usage endpoint is Go-key territory, so a pure pay-as-you-go Zen base URL
+ * ({@code …/zen/v1}) would 401 on every poll.
  *
  * <p>Probes {@code {origin}/zen/go/v1/usage}: {@code usage} carries one
  * optional entry per billing window — {@code rolling} (5h), {@code weekly},
- * {@code monthly} — each reporting {@code percent} (used percent) and an ISO
- * {@code resetsAt}. At least one window must parse.
+ * {@code monthly} — each reporting {@code percent} (used percent), a
+ * {@code status} ({@code ok} / {@code active} / {@code rate-limited}) and an
+ * ISO {@code resetsAt}. At least one window must parse.
  */
 public final class OpenCodeUsageVendor implements RelayUsageVendor {
 
@@ -26,7 +30,8 @@ public final class OpenCodeUsageVendor implements RelayUsageVendor {
 
     @Override
     public boolean matches(String host, String path) {
-        return host != null && host.equalsIgnoreCase("opencode.ai");
+        return host != null && host.equalsIgnoreCase("opencode.ai")
+                && path != null && path.contains("/zen/go");
     }
 
     @Override
@@ -64,11 +69,26 @@ public final class OpenCodeUsageVendor implements RelayUsageVendor {
             return;
         }
         Double pct = RelayUsageJson.asDouble(entry, "percent");
-        if (pct == null || !Double.isFinite(pct)) {
+        boolean rateLimited = isRateLimited(RelayUsageJson.asString(entry, "status"));
+        if ((pct == null || !Double.isFinite(pct)) && !rateLimited) {
             return;
         }
-        windows.add(RelayUsageJson.window(id, RelayUsageJson.clampPct(pct),
+        // A rate-limited window is fully consumed even if the reported percent lags behind.
+        double usedPct = rateLimited
+                ? 100.0
+                : RelayUsageJson.clampPct(pct == null ? 0.0 : pct);
+        windows.add(RelayUsageJson.window(id, usedPct,
                 isoToEpochMs(RelayUsageJson.asString(entry, "resetsAt"))));
+    }
+
+    /** {@code true} for the API's "rate-limited" status (hyphen/underscore tolerant). */
+    static boolean isRateLimited(String status) {
+        if (status == null) {
+            return false;
+        }
+        String normalized = status.trim().toLowerCase(Locale.ROOT)
+                .replace('_', '-');
+        return "rate-limited".equals(normalized);
     }
 
     private static Long isoToEpochMs(String iso) {

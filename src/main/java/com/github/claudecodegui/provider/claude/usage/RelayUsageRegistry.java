@@ -16,6 +16,9 @@ import java.util.Locale;
  * {@code ANTHROPIC_BASE_URL} against the registered {@link RelayUsageVendor}s,
  * then probes with the shared cache/stale policy.
  *
+ * <p>Registration order: {@code kimi-coding} precedes {@code moonshot} because
+ * {@code api.kimi.com} only serves the Coding Plan; the Moonshot balance vendor
+ * deliberately matches only api.moonshot.cn / api.moonshot.ai.
  */
 public final class RelayUsageRegistry {
 

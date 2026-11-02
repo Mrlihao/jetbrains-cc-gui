@@ -9,8 +9,8 @@ import {
 } from '../../utils/planUsagePace';
 import { PlanUsageLoading } from './PlanUsageLoading';
 import { PlanUsageUnavailable } from './PlanUsageUnavailable';
-import { PlanUsageBalance } from './PlanUsageBalance';
 import { PlanUsageBar } from './PlanUsageBar';
+import { PlanUsageTooltip } from './PlanUsageTooltip';
 import {
   buildBalanceTooltip,
   buildPlanUsageTooltip,
@@ -68,8 +68,8 @@ export const PlanUsageIndicator: React.FC<PlanUsageIndicatorProps> = memo(({
   }), [present, snapshot, tp, fullReset, display, windows, worstColor, color, i18n.language, t]);
 
   const balanceTooltip = useMemo(
-    () => buildBalanceTooltip(snapshot, balance?.amount ?? '', t),
-    [snapshot, balance?.amount, t],
+    () => (balance ? buildBalanceTooltip(snapshot, balance.amount, t) : ''),
+    [balance, snapshot, t],
   );
 
   if (status === 'idle') return null;
@@ -83,18 +83,20 @@ export const PlanUsageIndicator: React.FC<PlanUsageIndicatorProps> = memo(({
   }
 
   // Prepaid balance vendors (DeepSeek/Moonshot/OpenRouter/…): no percentage
-  // denominator, so the labeled amount renders instead of the bar.
-  // Reaching here relies on resolveDisplayWindow's fallback returning
-  // capacityPct 0 for balance-only snapshots — that keeps `present` true
-  // past the !present return above.
+  // denominator, so show the labeled amount instead of the bar. Reaching here
+  // relies on resolveDisplayWindow's fallback returning capacityPct 0 for
+  // balance-only snapshots — that keeps `present` true past the check above.
   if (balance) {
     return (
-      <PlanUsageBalance
-        amount={balance.amount}
-        color={balance.color}
+      <PlanUsageTooltip
+        className={`plan-usage pace-${balance.color}`}
         tooltip={balanceTooltip}
-        t={t}
-      />
+      >
+        <span className="plan-usage-balance">
+          {t('chat.planUsage.balanceLabel', { defaultValue: 'Balance: ' })}
+          {balance.amount}
+        </span>
+      </PlanUsageTooltip>
     );
   }
 

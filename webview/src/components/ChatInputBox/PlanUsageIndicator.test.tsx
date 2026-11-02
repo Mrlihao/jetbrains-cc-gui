@@ -135,6 +135,25 @@ describe('PlanUsageIndicator', () => {
     expect(tooltip.textContent).not.toContain('Invalid Date');
   });
 
+  it('titles a Grok reading and explains a dormant one without calling it a failure', async () => {
+    render(<PlanUsageIndicator status="ready" snapshot={{
+      present: true,
+      capacityPct: 42,
+      periodType: 'USAGE_PERIOD_TYPE_WEEKLY',
+      provider: 'grok',
+      stale: true,
+      dormant: true,
+    }} />);
+
+    fireEvent.mouseEnter(screen.getByRole('group'));
+    const tooltip = await screen.findByRole('tooltip');
+
+    expect(tooltip.textContent).toContain('Grok plan usage');
+    expect(tooltip.textContent).not.toContain('Claude');
+    expect(tooltip.textContent).toContain('refreshes the next time you use Grok');
+    expect(tooltip.textContent).not.toContain('refresh failed');
+  });
+
   it('applies pace color class from TP vs TT', () => {
     // end far future, start far past → TT high → TP low → green
     const far = new Date();
@@ -160,8 +179,8 @@ describe('PlanUsageIndicator', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('renders the balance amount instead of the bar for prepaid vendors', () => {
-    const { container, getByText } = render(
+  it('renders the balance amount instead of the bar for prepaid vendors', async () => {
+    const { container } = render(
       <PlanUsageIndicator
         status="ready"
         snapshot={{
@@ -171,15 +190,17 @@ describe('PlanUsageIndicator', () => {
         }}
       />,
     );
-    expect(getByText('Balance: ¥42.50')).toBeTruthy();
+    expect(screen.getByText('Balance: ¥42.50')).toBeTruthy();
     expect(container.querySelector('.plan-usage-bar')).toBeNull();
     expect(container.querySelector('.plan-usage-balance')).toBeTruthy();
+
+    fireEvent.mouseEnter(screen.getByRole('group'));
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip.textContent).toContain('Balance: ¥42.50');
   });
 
-  it('colors an exhausted balance red and shows totals in the tooltip', () => {
-    // The test env has no i18n instance, so t() returns raw defaultValue
-    // without {{…}} interpolation — assert on words, not interpolated values.
-    const { container, getByText } = render(
+  it('colors an exhausted balance red and shows totals in the rendered tooltip', async () => {
+    const { container } = render(
       <PlanUsageIndicator
         status="ready"
         snapshot={{
@@ -189,12 +210,49 @@ describe('PlanUsageIndicator', () => {
         }}
       />,
     );
-    expect(getByText('Balance: $0.00')).toBeTruthy();
-    expect(container.querySelector('.pace-red')).toBeTruthy();
-    const tooltip = container.querySelector('.plan-usage')?.getAttribute('data-tooltip') ?? '';
-    expect(tooltip).toContain('Balance');
-    expect(tooltip).toContain('Total');
-    expect(tooltip).toContain('Used');
+    expect(screen.getByText('Balance: $0.00')).toBeTruthy();
+    expect(container.querySelector('.plan-usage.pace-red')).toBeTruthy();
+
+    fireEvent.mouseEnter(screen.getByRole('group'));
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip.textContent).toContain('Balance: $0.00');
+    expect(tooltip.textContent).toContain('Total $100.00 · Used $100.00');
+  });
+
+  it('colors a sub-cent balance like the rounded amount it displays', () => {
+    // remaining $0.004 displays as "$0.00" — the color follows the displayed
+    // (rounded) amount, so it is red rather than neutral.
+    const { container } = render(
+      <PlanUsageIndicator
+        status="ready"
+        snapshot={{
+          present: true,
+          source: 'openrouter',
+          balance: { remaining: 0.004, total: 100, used: 99.996, unit: 'USD' },
+        }}
+      />,
+    );
+    expect(screen.getByText('Balance: $0.00')).toBeTruthy();
+    expect(container.querySelector('.plan-usage.pace-red')).toBeTruthy();
+  });
+
+  it('renders Moonshot international (api.moonshot.ai) balances in USD', async () => {
+    render(
+      <PlanUsageIndicator
+        status="ready"
+        snapshot={{
+          present: true,
+          source: 'moonshot',
+          balance: { remaining: 12.5, total: null, used: null, unit: 'USD' },
+        }}
+      />,
+    );
+    expect(screen.getByText('Balance: $12.50')).toBeTruthy();
+
+    fireEvent.mouseEnter(screen.getByRole('group'));
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip.textContent).toContain('Balance: $12.50');
+    expect(tooltip.textContent).not.toContain('¥');
   });
 
   it('prefers windows over balance when both are present', () => {

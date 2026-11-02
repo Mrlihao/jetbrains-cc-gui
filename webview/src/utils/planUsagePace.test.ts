@@ -98,6 +98,15 @@ describe('formatBalance', () => {
     expect(formatBalance(-1.2, 'USD')).toBe('-$1.20');
   });
 
+  it('rounds to cents before deciding the sign, so -0.001 renders as ¥0.00', () => {
+    expect(formatBalance(-0.001, 'CNY')).toBe('¥0.00');
+    expect(formatBalance(-0.006, 'USD')).toBe('-$0.01');
+  });
+
+  it('spells out units without a known sign instead of borrowing ¥', () => {
+    expect(formatBalance(10, 'EUR')).toBe('EUR 10.00');
+  });
+
   it('renders a dash for non-finite amounts', () => {
     expect(formatBalance(Number.NaN, 'USD')).toBe('—');
   });
@@ -133,6 +142,18 @@ describe('window switching', () => {
   it('prefers the stored window id and falls back to top-level binding', () => {
     expect(resolveDisplayWindow(snap, '7d')).toMatchObject({ windowId: '7d', capacityPct: 21 });
     expect(resolveDisplayWindow(snap, null).capacityPct).toBe(92);
+  });
+
+  it('keeps balance-only snapshots renderable through the capacity fallback', () => {
+    const balanceOnly = parseCapacityPayload({
+      present: true,
+      source: 'deepseek',
+      balance: { remaining: 5, unit: 'CNY' },
+    });
+    expect(resolveDisplayWindow(balanceOnly, null)).toMatchObject({
+      windowId: null,
+      capacityPct: 0,
+    });
   });
 
   it('labels raw ids compactly', () => {

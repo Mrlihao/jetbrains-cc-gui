@@ -9,6 +9,11 @@ export type ClaudePlanUsageState = {
 
 const EMPTY: ClaudePlanUsageState = { status: 'idle', snapshot: null };
 
+// Module-level so request ids never repeat across remounts: an instance-scoped
+// counter restarts at 1 and a slow in-flight reply from the previous instance
+// (e.g. after a settings round-trip) would be accepted as the new one's own.
+let requestSeq = 0;
+
 /**
  * Apply one poll result. Until the first present payload the bar stays hidden:
  * backends that never emit {@code rate_limit_event} (API keys, proxies) would
@@ -34,7 +39,6 @@ function applySnapshot(
 export function useClaudePlanUsage(currentProvider: string) {
   const [state, setState] = useState<ClaudePlanUsageState>(EMPTY);
   const genRef = useRef(0);
-  const handlerRef = useRef<((json: string) => void) | null>(null);
   const activeProviderIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -43,6 +47,7 @@ export function useClaudePlanUsage(currentProvider: string) {
       return;
     }
     const gen = ++genRef.current;
+    const requestId = String(++requestSeq);
     // Keep the last data while re-polling; stay hidden until the first event.
     setState((prev) => (prev.snapshot?.present ? prev : EMPTY));
 
@@ -51,10 +56,18 @@ export function useClaudePlanUsage(currentProvider: string) {
       sendToJava?: (cmd: string) => void;
     };
 
+    // Bind this poll's handler directly: a reply is only accepted by the
+    // callback that replaced the previous one (no shared handlerRef churn).
     const handler = (jsonStr: string) => {
       if (gen !== genRef.current) return;
       try {
         const data = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+        // Replies from earlier polls can still reach the global callback
+        // after a switch; Java echoes the request id so stale data is dropped
+        // instead of overwriting the new provider's snapshot. The id is
+        // module-unique, so a stale reply from before a remount is dropped too.
+        const echoed = (data as { request_id?: unknown } | null)?.request_id;
+        if (echoed != null && String(echoed) !== requestId) return;
         setState((prev) => applySnapshot(prev, parseCapacityPayload(data)));
       } catch {
         setState((prev) =>
@@ -62,15 +75,10 @@ export function useClaudePlanUsage(currentProvider: string) {
       }
     };
 
-    handlerRef.current = handler;
-    w.updateClaudePlanUsage = (json: string) => {
-      if (handlerRef.current) {
-        handlerRef.current(json);
-      }
-    };
+    w.updateClaudePlanUsage = handler;
 
     try {
-      w.sendToJava?.('get_claude_plan_usage:');
+      w.sendToJava?.(`get_claude_plan_usage:${requestId}`);
     } catch {
       if (gen === genRef.current) {
         setState((prev) =>
@@ -110,11 +118,14 @@ export function useClaudePlanUsage(currentProvider: string) {
         if (!provider?.id) return;
         const previous = activeProviderIdRef.current;
         activeProviderIdRef.current = provider.id;
-        // Refresh on the first event too: after navigating away and back
-        // (e.g. settings), this ref starts null again and that first push may
-        // itself be a switch — treating it as a silent baseline would leave
-        // stale usage on screen. Same-id re-pushes are deduped.
-        if (previous !== provider.id) {
+        // Only an actual switch clears and re-polls. The first push after
+        // mount (settingsBootstrap's get_active_provider reply, ~200ms after
+        // load) is not a switch: the instance is already polling with current
+        // data, and clearing here would blink a visible indicator
+        // (ready → idle → ready). A remount after a settings-page switch is
+        // covered by the mount-time refresh, which reads the new provider.
+        // Same-id re-pushes are deduped.
+        if (previous !== null && previous !== provider.id) {
           // Drop the old provider's snapshot first: a backend without usage
           // support then stays hidden instead of showing "Usage —".
           setState(EMPTY);
