@@ -31,8 +31,8 @@ interface HistoryViewProps {
   onExportSession: (sessionId: string, title: string) => void; // Export session callback
   onToggleFavorite: (sessionId: string) => void; // Toggle favorite callback
   onUpdateTitle: (sessionId: string, newTitle: string) => void; // Update title callback
-  onRegenerateTitle: (sessionId: string) => void; // Request AI title regeneration from session content
-  regeneratingTitleSessionIds: ReadonlySet<string>; // Sessions with regeneration in flight (shared with the chat-header button)
+  onRegenerateTitle?: (sessionId: string) => void; // Request AI title regeneration from session content
+  regeneratingTitleSessionIds?: ReadonlySet<string>; // Sessions with regeneration in flight (shared with the chat-header button)
   onConvertToCliSession: (sessionId: string) => void; // Convert sidechain session to CLI session callback
 }
 
@@ -222,7 +222,7 @@ const HistoryView = ({ historyData, currentProvider, currentSessionId, currentSe
   // (SessionContext + sessionCallbacks) so the chat-header button shares them.
 
   const handleRegenerateRequest = useCallback((sessionId: string) => {
-    onRegenerateTitle(sessionId);
+    onRegenerateTitle?.(sessionId);
   }, [onRegenerateTitle]);
 
   const confirmConvert = useCallback(() => {
@@ -258,7 +258,7 @@ const HistoryView = ({ historyData, currentProvider, currentSessionId, currentSe
       isCopied={copiedSessionId === session.sessionId}
       isCopyFailed={copyFailedSessionId === session.sessionId}
       isActiveSession={currentSessionId === session.sessionId}
-      isRegeneratingTitle={regeneratingTitleSessionIds.has(session.sessionId)}
+      isRegeneratingTitle={regeneratingTitleSessionIds?.has(session.sessionId) ?? false}
       editingTitle={editingSessionId === session.sessionId ? editingTitle : ''}
       searchQuery={searchQuery}
       t={t}
