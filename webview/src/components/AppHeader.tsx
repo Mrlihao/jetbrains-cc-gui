@@ -25,7 +25,6 @@ export const AppHeader = ({ sessionTitle, onNewSession, onUpdateHistoryTitle, on
   const {
     currentView, setCurrentView,
     setSettingsInitialTab, setSettingsProviderSubTab,
-    setSearchOpen,
   } = useUIState();
   const { currentSessionId, historyData, setCustomSessionTitle } = useSession();
 
@@ -63,7 +62,6 @@ export const AppHeader = ({ sessionTitle, onNewSession, onUpdateHistoryTitle, on
         setSettingsProviderSubTab(undefined);
         setCurrentView('settings');
       }}
-      onOpenSearch={() => setSearchOpen(true)}
       titleEditable
       onRegenerateTitle={handleRegenerateTitle}
       isRegeneratingTitle={currentSessionId != null && regeneratingTitleSessionIds.has(currentSessionId)}
